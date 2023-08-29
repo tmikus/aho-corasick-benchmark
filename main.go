@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
+	"math/rand"
 	"os"
 	"runtime"
 	"strings"
@@ -14,6 +14,7 @@ import (
 	ak "github.com/anknown/ahocorasick"
 	cf "github.com/cloudflare/ahocorasick"
 	ih "github.com/iohub/ahocorasick"
+	tm "github.com/tmikus/ahocorasick_rs"
 )
 
 func timeStuff(fn func()) float64 {
@@ -29,7 +30,7 @@ func totalAlloc() float64 {
 	return float64(m.TotalAlloc) / (1024 * 1024 * 1024)
 }
 
-func iohub(patterns []string, input string) (float64, float64, int, float64) {
+func iohub(patterns []string, input string) (float64, float64, int) {
 	m := ih.NewMatcher()
 
 	buildTime := timeStuff(func() {
@@ -53,10 +54,10 @@ func iohub(patterns []string, input string) (float64, float64, int, float64) {
 		resp.Release()
 	})
 
-	return buildTime, searchTime, numMatches, totalAlloc()
+	return buildTime, searchTime, numMatches
 }
 
-func anknown(patterns []string, input string) (float64, float64, int, float64) {
+func anknown(patterns []string, input string) (float64, float64, int) {
 	runePatterns := make([][]rune, len(patterns))
 	for i, pattern := range patterns {
 		runePatterns[i] = []rune(pattern)
@@ -76,10 +77,10 @@ func anknown(patterns []string, input string) (float64, float64, int, float64) {
 		matches = m.MultiPatternSearch(runeInput, false)
 	})
 
-	return buildTime, searchTime, len(matches), totalAlloc()
+	return buildTime, searchTime, len(matches)
 }
 
-func bobusumisu(patterns []string, input string) (float64, float64, int, float64) {
+func bobusumisu(patterns []string, input string) (float64, float64, int) {
 	var matches []*bs.Match
 	var trie *bs.Trie
 
@@ -91,10 +92,10 @@ func bobusumisu(patterns []string, input string) (float64, float64, int, float64
 		matches = trie.MatchString(input)
 	})
 
-	return buildTime, searchTime, len(matches), totalAlloc()
+	return buildTime, searchTime, len(matches)
 }
 
-func cloudflare(patterns []string, input string) (float64, float64, int, float64) {
+func cloudflare(patterns []string, input string) (float64, float64, int) {
 	var m *cf.Matcher
 	var matches []int
 	buildTime := timeStuff(func() {
@@ -103,51 +104,93 @@ func cloudflare(patterns []string, input string) (float64, float64, int, float64
 	searchTime := timeStuff(func() {
 		matches = m.Match([]byte(input))
 	})
-	return buildTime, searchTime, len(matches), totalAlloc()
+	return buildTime, searchTime, len(matches)
 }
 
-var tests = []struct {
+func tmikus(patterns []string, input string) (float64, float64, int) {
+	var matches []tm.Match
+	var trie *tm.AhoCorasick
+
+	buildTime := timeStuff(func() {
+		trie = tm.NewAhoCorasick(patterns)
+	})
+
+	searchTime := timeStuff(func() {
+		matches = trie.FindAll(input)
+	})
+
+	trie.Close()
+
+	return buildTime, searchTime, len(matches)
+}
+
+type testDef struct {
 	name string
-	fn   func([]string, string) (float64, float64, int, float64)
-}{
+	fn   func([]string, string) (float64, float64, int)
+}
+
+var tests = []testDef{
 	{"anknown   ", anknown},
 	{"bobusumisu", bobusumisu},
 	{"cloudflare", cloudflare},
 	{"iohub     ", iohub},
+	{"tmikus    ", tmikus},
 }
 
-func main() {
-
-	f, err := os.Open("test_data/NSF-ordlisten.cleaned.txt")
+func loadPatterns() []string {
+	f, err := os.Open("EOWL-v1.1.2/words.txt")
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
-	s := bufio.NewScanner(f)
 
 	patterns := make([]string, 0)
-
-	for s.Scan() {
-		patterns = append(patterns, strings.TrimSpace(s.Text()))
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		patterns = append(patterns, scanner.Text())
 	}
+	return patterns
+}
 
-	if err := s.Err(); err != nil {
-		panic(err)
+func generateSentence(patterns []string, wordCount int) string {
+	r := rand.New(rand.NewSource(int64(wordCount)))
+	sentence := ""
+	for i := 0; i < wordCount; i++ {
+		sentence += patterns[r.Intn(len(patterns))] + " "
 	}
+	return strings.TrimSpace(sentence)
+}
 
-	inputBytes, err := ioutil.ReadFile("test_data/Ibsen.txt")
-	if err != nil {
-		panic(err)
+func runMultipleTimes(test testDef, patterns []string, input string) (float64, float64, int, float64) {
+	runTimes := 10
+	buildTime := 0.0
+	searchTime := 0.0
+	numMatches := 0
+	totalAllocations := 0.0
+	for i := 0; i < runTimes; i++ {
+		runtime.GC()
+		allocationsBefore := totalAlloc()
+		b, s, n := test.fn(patterns, input)
+		buildTime += b
+		searchTime += s
+		numMatches += n
+		totalAllocations += totalAlloc() - allocationsBefore
 	}
-	input := string(inputBytes)
+	return buildTime / float64(runTimes), searchTime / float64(runTimes), numMatches / runTimes, totalAllocations / float64(runTimes)
+}
 
+func main() {
+	patterns := loadPatterns()
+
+	fmt.Println("Running benchmarks...")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', tabwriter.AlignRight)
-	fmt.Fprintf(w, "name\tpatterns\tbuild\tsearch\tmatches\talloc\t\n")
-	for i := 1000; i < len(patterns); i *= 2 {
+	fmt.Fprintf(w, "name\tpatterns\tinput len\tbuild\tsearch\tmatches\talloc\t\n")
+	for sentenceLength := 1; sentenceLength <= 65536; sentenceLength *= 2 {
+		input := generateSentence(patterns, sentenceLength)
 		for _, test := range tests {
-			runtime.GC()
-			buildTime, searchTime, numMatches, totalAlloc := test.fn(patterns[:i], input)
-			fmt.Fprintf(w, "%s\t%d\t%.02fms\t%.02fms\t%d\t%.02fGiB\t\n", test.name, i, buildTime, searchTime, numMatches, totalAlloc)
+			fmt.Println("Running", test.name, "with a sentence length of", sentenceLength, "words...")
+			buildTime, searchTime, numMatches, totalAllocations := runMultipleTimes(test, patterns, input)
+			fmt.Fprintf(w, "%s\t%d\t%d\t%.02fms\t%.02fms\t%d\t%.02fGiB\t\n", test.name, len(patterns), len(input), buildTime, searchTime, numMatches, totalAllocations)
 		}
 		fmt.Fprintf(w, "\t\t\t\t\t\t\t\n")
 	}
