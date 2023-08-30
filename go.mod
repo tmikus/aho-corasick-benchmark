@@ -7,7 +7,7 @@ require (
 	github.com/anknown/ahocorasick v0.0.0-20190904063843-d75dbd5169c0
 	github.com/cloudflare/ahocorasick v0.0.0-20210425175752-730270c3e184
 	github.com/iohub/ahocorasick v0.0.0-20190713143823-b7bfd8ad9e27
-	github.com/tmikus/ahocorasick_rs v0.0.0-20230827205352-a9c867923d7e
+	github.com/tmikus/ahocorasick_rs v0.0.0-20230830174635-888034f469a0
 )
 
 require (

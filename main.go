@@ -119,8 +119,6 @@ func tmikus(patterns []string, input string) (float64, float64, int) {
 		matches = trie.FindAll(input)
 	})
 
-	trie.Close()
-
 	return buildTime, searchTime, len(matches)
 }
 
