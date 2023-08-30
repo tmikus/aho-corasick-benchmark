@@ -8,7 +8,7 @@ if [ ! -d "EOWL-v1.1.2" ]; then
         echo "Error: 'unzip' command is required to run this script" >&2
         exit 1
     fi
-    wget $EOWL_URL
+    curl -L -o EOWL-v1.1.2.zip $EOWL_URL
     unzip EOWL-v1.1.2.zip "EOWL-v1.1.2/LF Delimited Format/*Words.txt" -d . > /dev/null
     rm EOWL-v1.1.2.zip
     # Combine all words into one file
